@@ -111,7 +111,9 @@ typedef int (*sys_type)(int num, int p1, int p2, int p3);
 sys_type sys_ori = 0;
 
 int __sys_c(int num, int p1, int p2, int p3) {
-    __android_log_print(ANDROID_LOG_INFO, "librev-dj", "num %d is call", num);
+    //原函数是靠r0-r7传递参数的，所以只hook前四个参数，后面不符合函数调用约定了
+    int trueNum = num - 0xE9;
+    __android_log_print(ANDROID_LOG_INFO, "librev-dj", "num 0x%x is call [0x%08X] [0x%08X] [0x%08X]", trueNum, p1, p2, p3);
     return sys_ori(num, p1, p2, p3);
 }
 
@@ -139,9 +141,10 @@ int my_cb (void *p) {
     return cb(p);
 }
 
-int my_cb2 (void *p) {
+int my_anti_hook_proc(void *p) {
     //DUMP_CALL_STACK("lib-rev-dj");
-    sleep(100000);
+    //注意，不能return，可能dy原来这个函数根本没打算return，以return就会crash，所以不返回就行
+    sleep(10000000);
     __android_log_print(ANDROID_LOG_INFO, "librev-dj", "cb2 call skip!!!");
     return 0;
     //return cb2(p);
@@ -197,7 +200,7 @@ __attribute__((constructor)) void __init__() {
     sprintf(cms_path, "/data/data/%s/lib/libcms.so", pkgName);
     void *cms = dlopen(cms_path, RTLD_NOW);
     __android_log_print(ANDROID_LOG_INFO, "librev-dj", "cms %p", cms);
-    loadSigaction();
+    //loadSigaction();
 
     MapInfo mapInfo;
     get_map_infos(&mapInfo, "libcms.so");
@@ -212,11 +215,12 @@ __attribute__((constructor)) void __init__() {
     __android_log_print(ANDROID_LOG_INFO, "librev-dj", "after hook %p", cb);
 
 
+    //0x00065ED0 这个是反hook的函数
     void *hook_anti_cb2 = (void*)((unsigned)mapInfo.baseAddr + 0x00065ED0+1);
     //0x66116 read syscall addr
 
     __android_log_print(ANDROID_LOG_INFO, "librev-dj", "before hook2");
-    MSHookFunction((void*)hook_anti_cb2, (void*)my_cb2, (void**)&cb2);
+    MSHookFunction((void *) hook_anti_cb2, (void *) my_anti_hook_proc, (void **) &cb2);
     __android_log_print(ANDROID_LOG_INFO, "librev-dj", "after hook 2 %p", cb2);
 
     void *syscall = (void*)((unsigned)mapInfo.baseAddr + 0x00009E7C);
