@@ -116,6 +116,13 @@ int __sys_c(int num, int p1, int p2, int p3) {
     __android_log_print(ANDROID_LOG_INFO, "librev-dj", "num 0x%x is call [0x%08X] [0x%08X] [0x%08X]", trueNum, p1, p2, p3);
     return sys_ori(num, p1, p2, p3);
 }
+sys_type sys_ori2 = 0;
+
+int __sys_c2(int p0, int p1, int p2, int p3) {
+    //原函数是靠r0-r7传递参数的，所以只hook前四个参数，后面不符合函数调用约定了
+    __android_log_print(ANDROID_LOG_INFO, "librev-dj", "clone is call [0x%08X] [0x%08X] [0x%08X] [0x%08X]", p0, p1, p2, p3);
+    return sys_ori2(p0, p1, p2, p3);
+}
 
 typedef int (*pthread_create_type)(pthread_t *thread, pthread_attr_t const * attr,
                    void *(*start_routine)(void *), void * arg);
@@ -149,34 +156,12 @@ int my_anti_hook_proc(void *p) {
     return 0;
     //return cb2(p);
 }
-struct sigaction old_action;
 
-void my_sigaction(int signal, siginfo_t *info, void *reserved) {
-    // Here catch the native crash
-    __android_log_print(ANDROID_LOG_INFO, "librev-dj", "get signal %d %d", signal, info->si_code);
-    ucontext_t *c = (ucontext_t*)reserved;
-    __android_log_print(ANDROID_LOG_INFO, "librev-dj", "pc=%p lr=%p", (void*)c->uc_mcontext.arm_pc, (void*)c->uc_mcontext.arm_lr);
-    old_action.sa_sigaction(signal, info, reserved);
-}
-
-int loadSigaction() {
-    __android_log_print(ANDROID_LOG_INFO, "librev-dj", "set signal handler");
-    struct sigaction handler = {0};
-    handler.sa_sigaction = my_sigaction;
-    // 信号处理之后重新设置为默认的处理方式。
-    //    SA_RESTART：使被信号打断的syscall重新发起。
-    //    SA_NOCLDSTOP：使父进程在它的子进程暂停或继续运行时不会收到 SIGCHLD 信号。
-    //    SA_NOCLDWAIT：使父进程在它的子进程退出时不会收到SIGCHLD信号，这时子进程如果退出也不会成为僵 尸进程。
-    //    SA_NODEFER：使对信号的屏蔽无效，即在信号处理函数执行期间仍能发出这个信号。
-    //    SA_RESETHAND：信号处理之后重新设置为默认的处理方式。
-    //      SA_SIGINFO：使用sa_sigaction成员而不是sa_handler作为信号处理函数。
-    handler.sa_flags = SA_SIGINFO;
-
-    sigaction(SIGSEGV,  // 代表信号编码，可以是除SIGKILL及SIGSTOP外的任何一个特定有效的信号，如果为这两个信号定义自己的处理函数，将导致信号安装错误。
-              &handler, // 指向结构体sigaction的一个实例的指针，该实例指定了对特定信号的处理，如果设置为空，进程会执行默认处理。
-              &old_action); // 和参数act类似，只不过保存的是原来对相应信号的处理，也可设置为NULL。
-
-    return 0;
+typedef int (*lev_type) (void *env, void *thiz, void *p1, void *p2);
+lev_type lev_ori=0;
+int my_lev(void *env, void *thiz, void *p1, void *p2) {
+    __android_log_print(ANDROID_LOG_INFO, "librev-dj", "my_lev!!!");
+    return lev_ori(env, thiz, p1, p2);
 }
 
 
@@ -200,11 +185,11 @@ __attribute__((constructor)) void __init__() {
     sprintf(cms_path, "/data/data/%s/lib/libcms.so", pkgName);
     void *cms = dlopen(cms_path, RTLD_NOW);
     __android_log_print(ANDROID_LOG_INFO, "librev-dj", "cms %p", cms);
-    //loadSigaction();
 
     MapInfo mapInfo;
     get_map_infos(&mapInfo, "libcms.so");
 
+    /*
     __android_log_print(ANDROID_LOG_INFO, "librev-dj", "cms base %p", mapInfo.baseAddr);
     __android_log_print(ANDROID_LOG_INFO, "librev-dj", "cms end %p", mapInfo.endAddr);
 
@@ -213,9 +198,17 @@ __attribute__((constructor)) void __init__() {
     __android_log_print(ANDROID_LOG_INFO, "librev-dj", "before hook");
     MSHookFunction((void*)hook_anti_cb, (void*)my_cb, (void**)&cb);
     __android_log_print(ANDROID_LOG_INFO, "librev-dj", "after hook %p", cb);
+     */
 
+
+    void *lev = (void*)((unsigned)mapInfo.baseAddr + 0x0005A788+1);
+
+    __android_log_print(ANDROID_LOG_INFO, "librev-dj", "before hook lev");
+    MSHookFunction((void*)lev, (void*)my_lev, (void**)&lev_ori);
+    __android_log_print(ANDROID_LOG_INFO, "librev-dj", "after hook lev %p", lev_ori);
 
     //0x00065ED0 这个是反hook的函数
+    //但是这样hook会导致网络登录卡住，这是由于这个函数有其他功能的原因，暂时不追究
     void *hook_anti_cb2 = (void*)((unsigned)mapInfo.baseAddr + 0x00065ED0+1);
     //0x66116 read syscall addr
 
@@ -229,6 +222,14 @@ __attribute__((constructor)) void __init__() {
     __android_log_print(ANDROID_LOG_INFO, "librev-dj", "before hook");
     MSHookFunction((void*)syscall, (void*)__sys_c, (void**)&sys_ori);
     __android_log_print(ANDROID_LOG_INFO, "librev-dj", "after hook %p", sys_ori);
+
+
+    void *clone_call = (void*)((unsigned)mapInfo.baseAddr + 0x000189EC);
+    /*
+    __android_log_print(ANDROID_LOG_INFO, "librev-dj", "before hook clone");
+    MSHookFunction((void*)clone_call, (void*)__sys_c2, (void**)&sys_ori2);
+    __android_log_print(ANDROID_LOG_INFO, "librev-dj", "after hook clone %p", sys_ori2);
+     */
 
     /*
     void *b = (void *)((unsigned )syscall & (~0x0FFF));
