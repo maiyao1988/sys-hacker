@@ -10,7 +10,6 @@
 #include <sys/mman.h>
 #include "StackDump.h"
 #include "ElfUtils.h"
-#include "../../../../Android/Sdk/android-ndk-r14b/platforms/android-21/arch-arm64/usr/include/signal.h"
 
 #define TAG "REV-DEMO"
 
