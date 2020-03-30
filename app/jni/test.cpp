@@ -13,62 +13,14 @@
 
 #define TAG "REV-DEMO"
 
-typedef ssize_t (*fnread) (int fd, void *buf, size_t count);
-fnread ori_read = read;
 
-ssize_t my_read(int fd, void *buf, size_t count) {
-    __android_log_print(ANDROID_LOG_INFO, TAG, "read call fd=%d, buf=%p, count=%u", fd, buf, count);
-    DUMP_CALL_STACK(TAG);
-    return ori_read(fd, buf, count);
-}
-extern "C" JNIEXPORT int test(int argc, const char **argv) {
-    int s = atoi(argv[1]);
-    int a = 0;
-    if (a>5) {
-        a = a+1;
-        printf("a %d", a);
-    }
-    else {
-        a *= 2;
-        printf("a %d", a);
-    }
-    return 0;
-}
-
+void sys_trace();
 extern "C" JNIEXPORT jstring JNICALL
 Java_com_reverse_my_reverseutils_MainActivity_stringFromJNI(
         JNIEnv* env,
         jobject /* this */) {
 
-    __android_log_print(ANDROID_LOG_INFO, TAG, "before hook %p", ori_read);
-    MSHookFunction((void*)read, (void*)my_read, (void**)&ori_read);
-    __android_log_print(ANDROID_LOG_INFO, TAG, "after hook %p", ori_read);
-
-    //inline_hook_check("libc.so");
-    inline_hook_check("libart.so");
-
-    std::vector<int> v;
-    v.push_back(3);
-    v.push_back(5);
-    std::vector<int>::iterator it = v.begin();
-    for (;it != v.end(); it++) {
-        printf("%d", *it);
-    }
-
-    std::string s = "abc";
-    s = s + "ccc";
-    printf("string %s", s.c_str());
-
-    if (s == "bbb") {
-        printf("hello world %d", s.find("kkk"));
-    }
-
-    /*
-    void *p = fake_dlopen("libc.so", 0);
-    fnread f = (fnread ) fake_dlsym(p, "read");
-    fake_dlclose(p);
-     */
-
+    sys_trace();
     std::string hello = "Hello from C++";
     return env->NewStringUTF(hello.c_str());
 }
@@ -165,7 +117,7 @@ int my_lev(void *env, void *thiz, void *p1, void *p2) {
 
 
 __attribute__((constructor)) void __init__() {
-    //__android_log_print(ANDROID_LOG_INFO, "librev-dj", "librev call!!!");
+    __android_log_print(ANDROID_LOG_INFO, "librev-dj", "librev call!!!");
     const char *path = "/proc/self/cmdline";
     char buf[300] = {0};
     FILE *f = fopen(path, "rb");
