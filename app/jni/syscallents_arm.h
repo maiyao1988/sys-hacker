@@ -1,4 +1,3 @@
-#define MAX_SYSCALL_NUM 381
 #include "syscalls.h"
 struct syscall_entry syscalls[] = {
   [0] = {
@@ -1398,3 +1397,5 @@ struct syscall_entry syscalls[] = {
     4,
     {ARG_INT, ARG_PTR, ARG_INT, ARG_INT, -1, -1}},
 };
+
+const short MAX_SYSCALL_NUM=sizeof(syscalls) / sizeof(syscall_entry);
