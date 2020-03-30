@@ -12,12 +12,21 @@
 
 #include <android/log.h>
 #include <fcntl.h>
+#include "syscallents_arm.h"
 
 void _log(const char *fmt, ...) {
     va_list v;
     va_start(v, fmt);
     __android_log_vprint(ANDROID_LOG_INFO, "sysmnt", fmt, v);
     va_end(v);
+}
+
+const char *get_syscall_name(int id) {
+    if (id >= MAX_SYSCALL_NUM) {
+        _log("get_syscal_name %d out-of-range %d", id, MAX_SYSCALL_NUM);
+        abort();
+    }
+    return syscalls[id].name;
 }
 
 int set_syscall_and_wait(pid_t child)
@@ -125,8 +134,9 @@ void trace1() {
             int pc = regs.ARM_pc;
             int lr = regs.ARM_lr;
 
-            _log("syscall (0x%x), [0x%08X] [0x%08X] [0x%08X] [0x%08X] [0x%08X] [0x%08X]", sysid, p0, p1, p2, p3, p4, p5, p6);
-            _log("syscall (0x%x), pc[0x%08X] lr[0x%08X]", sysid, pc, lr);
+            const char *name = get_syscall_name(sysid);
+            _log("(%s) (0x%x), [0x%08X] [0x%08X] [0x%08X] [0x%08X] [0x%08X] [0x%08X]", name, sysid, p0, p1, p2, p3, p4, p5, p6);
+            _log("(%s) (0x%x), pc[0x%08X] lr[0x%08X]", name, sysid, pc, lr);
 
             err = set_syscall_and_wait(pid);
             if (err != 0) {
@@ -136,7 +146,7 @@ void trace1() {
             struct pt_regs regs2;
             ptrace(PTRACE_GETREGS, pid, NULL, &regs2);
             int retval = regs2.ARM_r0;
-            _log("syscall (0x%x) return %d\n", sysid, retval);
+            _log("(%s) (0x%x) return %d\n", name, sysid, retval);
         }
     }
 }
