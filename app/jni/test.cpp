@@ -161,7 +161,7 @@ __attribute__((constructor)) void __init__() {
     //0x00065ED0 这个是反hook的函数
     //但是这样hook会导致网络登录卡住，这是由于这个函数有其他功能的原因，暂时不追究
     void *hook_anti_cb2 = (void*)((unsigned)mapInfo.baseAddr + 0x00065ED0+1);
-    //0x66116 read syscall addr
+    //0x66116 read syscall addr anti hook 0000836E maybe anti hook
 
     __android_log_print(ANDROID_LOG_INFO, "librev-dj", "before hook2");
     MSHookFunction((void *) hook_anti_cb2, (void *) my_anti_hook_proc, (void **) &cb2);

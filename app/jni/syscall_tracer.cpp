@@ -12,6 +12,7 @@
 
 #include <android/log.h>
 #include <fcntl.h>
+#include <pthread.h>
 #include "syscallents_arm.h"
 
 static bool g_is32bit = true;
@@ -31,6 +32,9 @@ const char *get_syscall_name(int id) {
     }
     return syscalls[id].name;
 }
+
+//#define PTRACE_GETHBPREGS 29
+//#define PTRACE_SETHBPREGS 30
 
 int set_syscall_and_wait(pid_t child, int signal=0)
 {
@@ -84,10 +88,19 @@ int set_syscall_and_wait(pid_t child, int signal=0)
 
     if (status>>8 == (SIGTRAP | (PTRACE_EVENT_EXEC<<8))) {
         //stop by execve
-        _log("execve sig");
+        _log("stop by execve");
+        return set_syscall_and_wait(child);
+    }
+    if (status>>8 == (SIGTRAP | (PTRACE_EVENT_CLONE<<8))) {
+        _log("stop by clone");
         return set_syscall_and_wait(child);
     }
 
+    if (status>>8 == (SIGTRAP | (PTRACE_EVENT_FORK<<8)) ||
+            status>>8 == (SIGTRAP | (PTRACE_EVENT_VFORK<<8))) {
+        _log("stop by fork/vfork");
+        return set_syscall_and_wait(child);
+    }
 
     if (WIFSTOPPED(status)) {
         int sig = WSTOPSIG(status);
@@ -102,40 +115,52 @@ int set_syscall_and_wait(pid_t child, int signal=0)
 }
 
 //TODO:support execve into 64
-//struct pt_regs64 {
-//    union {
-//        struct user_pt_regs user_regs;
-//        struct {
-//            uint64_t regs[31];
-//            uint64_t sp;
-//            uint64_t pc;
-//            uint64_t pstate;
-//        };
-//    };
-//    uint64_t orig_x0;
-//#ifdef __AARCH64EB__
-//    u32 unused2;
-//	s32 syscallno;
-//#else
-//    int32_t syscallno;
-//    uint32_t unused2;
-//#endif
-//
-//    uint64_t orig_addr_limit;
-//    /* Only valid when ARM64_HAS_IRQ_PRIO_MASKING is enabled. */
-//    uint64_t pmr_save;
-//    uint64_t stackframe[2];
-//};
+void *_thread_p(void *p) {
+    sleep(1000);
+    return 0;
+}
+
+void print_call_before(pid_t pid) {
+    struct pt_regs regs = {0};
+    ptrace(PTRACE_GETREGS, pid, NULL, &regs);
+    int sysid = regs.ARM_r7;
+    int p0 = regs.ARM_r0;
+    int p1 = regs.ARM_r1;
+    int p2 = regs.ARM_r2;
+    int p3 = regs.ARM_r3;
+    int p4 = regs.ARM_r4;
+    int p5 = regs.ARM_r5;
+    int p6 = regs.ARM_r6;
+    int pc = regs.ARM_pc;
+    int lr = regs.ARM_lr;
+
+    const char *name = get_syscall_name(sysid);
+    _log("(%d)(%s) (0x%x), [0x%08X] [0x%08X] [0x%08X] [0x%08X] [0x%08X] [0x%08X]", pid, name, sysid, p0, p1, p2, p3, p4, p5, p6);
+    _log("(%d)(%s) (0x%x), pc[0x%08X] lr[0x%08X]", pid, name, sysid, pc, lr);
+}
+
+void print_call_after(pid_t pid) {
+    struct pt_regs regs2;
+    ptrace(PTRACE_GETREGS, pid, NULL, &regs2);
+    int retval = regs2.ARM_r0;
+    int sysid = regs2.ARM_r7;
+    const char *name = get_syscall_name(sysid);
+    _log("(%d)(%s) (0x%x) return %d\n", pid, name, sysid, retval);
+}
 
 void trace1() {
     int val = 0;
     int pid = fork();
     if(pid == 0)
     {
-        signal(SIGINT, SIG_IGN);
-        ptrace(PTRACE_TRACEME,0,NULL,NULL);
+        //signal(SIGINT, SIG_IGN);
+        ptrace(PTRACE_TRACEME, 0, NULL, NULL);
         kill(getpid(), SIGSTOP);
         //execl("/system/bin/ls", "ls", NULL);
+        pthread_t t;
+        _log("before pthread_create");
+        pthread_create(&t, 0, _thread_p, 0);
+        _log("after pthread_create");
 
         _log("before write");
         syscall(4, 2, "c111\n", 4);
@@ -148,10 +173,11 @@ void trace1() {
     else {
 
         _log("before wait");
-        wait(&val); //等待并记录execve
+        wait(&val); //等待kill stop
         _log("after wait");
 
-        ptrace(PTRACE_SETOPTIONS, pid, 0, PTRACE_O_TRACESYSGOOD|PTRACE_O_TRACEEXEC);
+        ptrace(PTRACE_SETOPTIONS, pid, 0, PTRACE_O_TRACESYSGOOD|PTRACE_O_TRACEEXEC|
+                                          PTRACE_O_TRACECLONE|PTRACE_O_TRACEFORK|PTRACE_EVENT_VFORK);
         if(WIFEXITED(val)) {
             _log("break1\n");
         }
@@ -163,33 +189,14 @@ void trace1() {
                 break;
             }
 
-
-            struct pt_regs regs = {0};
-            ptrace(PTRACE_GETREGS, pid, NULL, &regs);
-            int sysid = regs.ARM_r7;
-            int p0 = regs.ARM_r0;
-            int p1 = regs.ARM_r1;
-            int p2 = regs.ARM_r2;
-            int p3 = regs.ARM_r3;
-            int p4 = regs.ARM_r4;
-            int p5 = regs.ARM_r5;
-            int p6 = regs.ARM_r6;
-            int pc = regs.ARM_pc;
-            int lr = regs.ARM_lr;
-
-            const char *name = get_syscall_name(sysid);
-            _log("(%s) (0x%x), [0x%08X] [0x%08X] [0x%08X] [0x%08X] [0x%08X] [0x%08X]", name, sysid, p0, p1, p2, p3, p4, p5, p6);
-            _log("(%s) (0x%x), pc[0x%08X] lr[0x%08X]", name, sysid, pc, lr);
+            print_call_before(pid);
 
             err = set_syscall_and_wait(pid);
             if (err != 0) {
                 break;
             }
 
-            struct pt_regs regs2;
-            ptrace(PTRACE_GETREGS, pid, NULL, &regs2);
-            int retval = regs2.ARM_r0;
-            _log("(%s) (0x%x) return %d\n", name, sysid, retval);
+            print_call_after(pid);
         }
         _log("syscall moniter exit");
     }
