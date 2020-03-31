@@ -24,7 +24,8 @@ void _log(const char *fmt, ...) {
 const char *get_syscall_name(int id) {
     if (id >= MAX_SYSCALL_NUM) {
         _log("get_syscal_name %d out-of-range %d", id, MAX_SYSCALL_NUM);
-        abort();
+        //abort();
+        return "[unknown]";
     }
     return syscalls[id].name;
 }
@@ -64,11 +65,11 @@ int set_syscall_and_wait(pid_t child)
     //      a stop due to the execution of a syscall (given
     //      that we set the PTRACE_O_TRACESYSGOOD option)
     if (WIFSTOPPED(status) && WSTOPSIG(status) & 0x80) {
-        _log("pid %d stop sig 0x%x", WSTOPSIG(status));
+        _log("pid %d stop sig 0x%x", child, WSTOPSIG(status));
         return 0;
     }
     if (WIFSIGNALED(status)) {
-        _log("pid %d term by signal %d", WTERMSIG(status));
+        _log("pid %d term by signal %d", child, WTERMSIG(status));
         return 2;
     }
 
@@ -78,13 +79,21 @@ int set_syscall_and_wait(pid_t child)
         return 1;
     }
 
-    _log("warning unknown status 0x%x", status);
-    return 3;
-}
+    if (status>>8 == (SIGTRAP | (PTRACE_EVENT_EXEC<<8))) {
+        _log("execve sig");
+        ptrace(PTRACE_SYSCALL, child, 0, 0);
+        waitpid(child, &status, 0);
+        int n1=WIFSTOPPED(status);
+        int n2=WSTOPSIG(status);
+        //what to do when execve????
+        return 0;
+    }
 
-long get_reg_arm(pid_t child,int num){
-    long val = ptrace(PTRACE_PEEKUSER, child, sizeof(long)*num);
-    return val;
+    int n1=WIFSTOPPED(status);
+    int n2=WSTOPSIG(status);
+
+    _log("warning unknown status 0x%x WIFSTOPPED(%d), WSTOPSIG(%d)", status, n1, n2);
+    return 3;
 }
 
 void trace1() {
@@ -94,13 +103,15 @@ void trace1() {
     {
         ptrace(PTRACE_TRACEME,0,NULL,NULL);
         kill(getpid(), SIGSTOP);
-        //execl("/system/bin/ls", "ls", NULL);
+        execl("/system/bin/ls", "ls", NULL);
+        /*
         _log("before write");
         syscall(4, 2, "c111\n", 4);
         _log("after write");
         //exit(1);
         syscall(1);
         //sleep(3);
+         */
     }
     else {
 
@@ -108,7 +119,7 @@ void trace1() {
         wait(&val); //等待并记录execve
         _log("after wait");
 
-        ptrace(PTRACE_SETOPTIONS, pid, 0, PTRACE_O_TRACESYSGOOD);
+        ptrace(PTRACE_SETOPTIONS, pid, 0, PTRACE_O_TRACESYSGOOD|PTRACE_O_TRACEEXEC);
         if(WIFEXITED(val)) {
             _log("break1\n");
         }
@@ -148,6 +159,7 @@ void trace1() {
             int retval = regs2.ARM_r0;
             _log("(%s) (0x%x) return %d\n", name, sysid, retval);
         }
+        _log("syscall moniter exit");
     }
 }
 
