@@ -14,6 +14,8 @@
 #include <fcntl.h>
 #include "syscallents_arm.h"
 
+static bool g_is32bit = true;
+
 void _log(const char *fmt, ...) {
     va_list v;
     va_start(v, fmt);
@@ -30,7 +32,7 @@ const char *get_syscall_name(int id) {
     return syscalls[id].name;
 }
 
-int set_syscall_and_wait(pid_t child)
+int set_syscall_and_wait(pid_t child, int signal=0)
 {
     int status;
     int err = 0;
@@ -39,7 +41,7 @@ int set_syscall_and_wait(pid_t child)
     // the tracee (child) continue its execution
     // and stop whenever there's a syscall being
     // executed (SIGTRAP is captured).
-    err = ptrace(PTRACE_SYSCALL, child, 0, 0);
+    err = ptrace(PTRACE_SYSCALL, child, 0, signal);
     if (err == -1) {
         _log("ptrace error");
         return err;
@@ -65,6 +67,7 @@ int set_syscall_and_wait(pid_t child)
     //      a stop due to the execution of a syscall (given
     //      that we set the PTRACE_O_TRACESYSGOOD option)
     if (WIFSTOPPED(status) && WSTOPSIG(status) & 0x80) {
+        //stop by get syscall
         _log("pid %d stop sig 0x%x", child, WSTOPSIG(status));
         return 0;
     }
@@ -80,38 +83,67 @@ int set_syscall_and_wait(pid_t child)
     }
 
     if (status>>8 == (SIGTRAP | (PTRACE_EVENT_EXEC<<8))) {
+        //stop by execve
         _log("execve sig");
-        ptrace(PTRACE_SYSCALL, child, 0, 0);
-        waitpid(child, &status, 0);
-        int n1=WIFSTOPPED(status);
-        int n2=WSTOPSIG(status);
-        //what to do when execve????
-        return 0;
+        return set_syscall_and_wait(child);
     }
 
-    int n1=WIFSTOPPED(status);
-    int n2=WSTOPSIG(status);
 
-    _log("warning unknown status 0x%x WIFSTOPPED(%d), WSTOPSIG(%d)", status, n1, n2);
+    if (WIFSTOPPED(status)) {
+        int sig = WSTOPSIG(status);
+        _log("get stop status 0x%x signal %d pass to tracee", status, sig);
+        return set_syscall_and_wait(child, sig);
+    }
+
+    int n1 = WIFSTOPPED(status);
+    int sig = WSTOPSIG(status);
+    _log("warning unknown status 0x%x WIFSTOPPED(%d), WSTOPSIG(%d)", status, n1, sig);
     return 3;
 }
+
+//TODO:support execve into 64
+//struct pt_regs64 {
+//    union {
+//        struct user_pt_regs user_regs;
+//        struct {
+//            uint64_t regs[31];
+//            uint64_t sp;
+//            uint64_t pc;
+//            uint64_t pstate;
+//        };
+//    };
+//    uint64_t orig_x0;
+//#ifdef __AARCH64EB__
+//    u32 unused2;
+//	s32 syscallno;
+//#else
+//    int32_t syscallno;
+//    uint32_t unused2;
+//#endif
+//
+//    uint64_t orig_addr_limit;
+//    /* Only valid when ARM64_HAS_IRQ_PRIO_MASKING is enabled. */
+//    uint64_t pmr_save;
+//    uint64_t stackframe[2];
+//};
 
 void trace1() {
     int val = 0;
     int pid = fork();
     if(pid == 0)
     {
+        signal(SIGINT, SIG_IGN);
         ptrace(PTRACE_TRACEME,0,NULL,NULL);
         kill(getpid(), SIGSTOP);
-        execl("/system/bin/ls", "ls", NULL);
-        /*
+        //execl("/system/bin/ls", "ls", NULL);
+
         _log("before write");
         syscall(4, 2, "c111\n", 4);
         _log("after write");
         //exit(1);
+        kill(getpid(), SIGINT);
         syscall(1);
         //sleep(3);
-         */
     }
     else {
 
