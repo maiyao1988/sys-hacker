@@ -60,7 +60,7 @@ public:
      * params child[in/out] the pid to continue, return the pid return by waitpid(-1)
      * signal
      */
-    int continue_syscall_and_wait(pid_t &child, int signal = 0)
+    int continue_syscall_and_wait(pid_t &pid, int signal = 0)
     {
         int status;
         int err = 0;
@@ -69,17 +69,19 @@ public:
         // the tracee (child) continue its execution
         // and stop whenever there's a syscall being
         // executed (SIGTRAP is captured).
-        err = ptrace(PTRACE_SYSCALL, child, 0, signal);
-        if (err == -1) {
-            _log("ptrace error");
-            return err;
+        if (pid != 0) {
+            err = ptrace(PTRACE_SYSCALL, pid, 0, signal);
+            if (err == -1) {
+                _log("ptrace error %s", strerror(errno));
+                return err;
+            }
         }
 
         // Wait until the next signal arrives
         // When the running tracee enters ptrace-stop, it
         // notifies its tracer using waitpid(2)
         // (or one of the other "wait" system calls).
-        child = waitpid(-1, &status, 0);
+        pid = waitpid(-1, &status, 0);
 
         // Ptrace-stopped tracees are reported as returns
         // with pid greater than 0 and WIFSTOPPED(status) true.
@@ -96,44 +98,43 @@ public:
         //      that we set the PTRACE_O_TRACESYSGOOD option)
         if (WIFSTOPPED(status) && WSTOPSIG(status) & 0x80) {
             //stop by get syscall
-            _log("pid %d stop sig 0x%x", child, WSTOPSIG(status));
+            _log("pid %d stop sig 0x%x", pid, WSTOPSIG(status));
             return 0;
         }
         if (WIFSIGNALED(status)) {
-            _log("pid %d term by signal %d", child, WTERMSIG(status));
+            _log("pid %d term by signal %d", pid, WTERMSIG(status));
             return 2;
         }
 
         // Check whether the child exited normally.
         if (WIFEXITED(status)) {
-            _log("pid %d exited", child);
+            _log("pid %d exited", pid);
             return 1;
         }
 
         if (status>>8 == (SIGTRAP | (PTRACE_EVENT_EXEC<<8))) {
             //stop by execve
-            _log("pid %d stop by execve", child);
-            return continue_syscall_and_wait(child);
+            _log("pid %d stop by execve", pid);
+            return continue_syscall_and_wait(pid);
         }
         if (status>>8 == (SIGTRAP | (PTRACE_EVENT_FORK<<8)) ||
             status>>8 == (SIGTRAP | (PTRACE_EVENT_VFORK<<8)) ||
             status>>8 == (SIGTRAP | (PTRACE_EVENT_CLONE<<8))) {
-            _log("pid %d stop by fork/vfork/clone", child);
+            _log("pid %d stop by fork/vfork/clone", pid);
             pid_t new_pid = 0;
-            if (ptrace(PTRACE_GETEVENTMSG, child, 0, &new_pid)
-                != -1) {
+            if (ptrace(PTRACE_GETEVENTMSG, pid, 0, &new_pid) != -1) {
                 _log("process %d created\n", new_pid);
                 mStatus[new_pid] = ProcessStatus();
                 ptrace(PTRACE_SETOPTIONS, new_pid, 0, PTRACE_O_TRACESYSGOOD|PTRACE_O_TRACEEXEC|
                                                       PTRACE_O_TRACECLONE|PTRACE_O_TRACEFORK|PTRACE_EVENT_VFORK);
             }
-            return continue_syscall_and_wait(child);
+            return continue_syscall_and_wait(pid);
         }
 
         if (WIFSTOPPED(status)) {
             int sig = WSTOPSIG(status);
             _log("get stop status 0x%x signal %d pass to tracee", status, sig);
-            return continue_syscall_and_wait(child, sig);
+            return continue_syscall_and_wait(pid, sig);
         }
 
         int n1 = WIFSTOPPED(status);
@@ -200,8 +201,15 @@ public:
         {
             int err = continue_syscall_and_wait(pid);
             if (err != 0) {
-                break;
+                mStatus.erase(pid);
+                //if wait error，pid is invalid，just pass 0 to next run
+                pid = 0;
+                if (mStatus.empty()) {
+                    break;
+                }
+                continue;
             }
+
             ProcessStatus &st = safe_get(pid);
             if (st.status == 0) {
                 st.status = 1;
@@ -222,12 +230,13 @@ public:
 };
 
 void *_thread_p(void *p) {
-    sleep(1000);
+    //sleep(1000);
     return 0;
 }
 
 void sys_trace() {
     signal(SIGCHLD, SIG_IGN);
+    int v = 0;
     int pid = fork();
     if(pid == 0)
     {
