@@ -1,3 +1,5 @@
+#include "syscallents_arm.h"
+#include "syscall_tracer.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -15,7 +17,6 @@
 #include <pthread.h>
 #include <sstream>
 #include <sys/prctl.h>
-#include "syscallents_arm.h"
 
 struct ProcessStatus {
     short status;
@@ -35,7 +36,7 @@ void _log(const char *fmt, ...) {
 }
 
 #include <map>
-class SysTracer {
+class SysTracer : public ISysTracer {
     //TODO:support execve into 64
     std::map<pid_t, ProcessStatus> mStatus;
 
@@ -297,8 +298,18 @@ public:
         }
         _log("syscall moniter exit");
     }
-
 };
+
+ISysTracer *sys_tracer_create() {
+    return new SysTracer();
+}
+
+void sys_tracer_release(ISysTracer *&p) {
+    if (SysTracer *impl = dynamic_cast<SysTracer*>(p)) {
+        delete(impl);
+        p = 0;
+    }
+}
 
 void *_thread_p(void *p) {
     //sleep(1000);
