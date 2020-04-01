@@ -34,6 +34,7 @@ void _log(const char *fmt, ...) {
 
 #include <map>
 class SysTracer {
+    //TODO:support execve into 64
     std::map<pid_t, ProcessStatus> mStatus;
 public:
     SysTracer() {
@@ -118,6 +119,7 @@ public:
             if (ptrace(PTRACE_GETEVENTMSG, child, 0, &new_pid)
                 != -1) {
                 _log("process %d created\n", new_pid);
+                mStatus[new_pid] = ProcessStatus();
                 ptrace(PTRACE_SETOPTIONS, new_pid, 0, PTRACE_O_TRACESYSGOOD|PTRACE_O_TRACEEXEC|
                                                       PTRACE_O_TRACECLONE|PTRACE_O_TRACEFORK|PTRACE_EVENT_VFORK);
             }
@@ -136,7 +138,6 @@ public:
         return 3;
     }
 
-//TODO:support execve into 64
 
     void on_before_syscall(pid_t pid) {
         struct pt_regs regs = {0};
@@ -166,6 +167,19 @@ public:
         _log("(%d)(%s) (0x%x) return %d\n", pid, name, sysid, retval);
     }
 
+    ProcessStatus &safe_get(pid_t pid) {
+        std::map<pid_t, ProcessStatus>::iterator it = mStatus.find(pid);
+        if (it != mStatus.end()) {
+            return it->second;
+        }
+        else {
+            _log("ERROR pid %d not find in maps", pid);
+            abort();
+        }
+        _log("ERROR pid %d impossible here", pid);
+        abort();
+    }
+
     void run(pid_t pid) {
         int val = 0;
         _log("before wait");
@@ -177,22 +191,22 @@ public:
         if(WIFEXITED(val)) {
             _log("break1\n");
         }
-        //ptrace(PTRACE_SYSCALL, pid, NULL, NULL);
+        mStatus[pid] = ProcessStatus();
         while(1)
         {
             int err = continue_syscall_and_wait(pid);
             if (err != 0) {
                 break;
             }
-
-            on_before_syscall(pid);
-
-            err = continue_syscall_and_wait(pid);
-            if (err != 0) {
-                break;
+            ProcessStatus &st = safe_get(pid);
+            if (st.status == 0) {
+                st.status = 1;
+                on_before_syscall(pid);
             }
-
-            on_after_syscall(pid);
+            else {
+                st.status = 0;
+                on_after_syscall(pid);
+            }
         }
         _log("syscall moniter exit");
     }
