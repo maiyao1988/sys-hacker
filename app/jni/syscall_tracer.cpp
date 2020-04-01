@@ -14,6 +14,7 @@
 #include <fcntl.h>
 #include <pthread.h>
 #include <sstream>
+#include <sys/prctl.h>
 #include "syscallents_arm.h"
 
 struct ProcessStatus {
@@ -107,6 +108,7 @@ class SysTracer {
         // the tracee (child) continue its execution
         // and stop whenever there's a syscall being
         // executed (SIGTRAP is captured).
+
         if (pid != 0) {
             err = ptrace(PTRACE_SYSCALL, pid, 0, signal);
             if (err == -1) {
@@ -214,6 +216,10 @@ class SysTracer {
                 sprintf(tmp, ",0x%08X", (unsigned)regs.uregs[i]);
                 ss << tmp;
             }
+            else{
+                _log("ERROR unknown param type %d", type);
+                abort();
+            }
 
         }
 
@@ -262,9 +268,12 @@ public:
 
     void run(pid_t pid) {
 
+        _log("11");
         ptrace(PTRACE_SETOPTIONS, pid, 0, PTRACE_O_TRACESYSGOOD|PTRACE_O_TRACEEXEC|
                                           PTRACE_O_TRACECLONE|PTRACE_O_TRACEFORK|PTRACE_EVENT_VFORK);
+        _log("22");
         mStatus[pid] = ProcessStatus();
+        _log("33");
         while(1)
         {
             int err = continue_syscall_and_wait(pid);
@@ -299,8 +308,45 @@ void *_thread_p(void *p) {
     return 0;
 }
 
+void sys_trace2() {
+    prctl(PR_SET_DUMPABLE, 1);
+    int pid = fork();
+    if(pid == 0) {
+        //child
+        pid_t ppid = getppid();
+        signal(SIGCHLD, SIG_IGN);
+        int r = ptrace(PTRACE_ATTACH, ppid);
+        if (r!=0) {
+            _log("ptrace attach %d error %s", ppid, strerror(errno));
+            return;
+        }
+        int val = 0;
+        _log("before wait");
+        wait(&val); //等待kill stop
+        _log("after wait");
+        if(WIFEXITED(val)) {
+            _log("break1\n");
+        }
+        char bb[50] = {0};
+        sprintf(bb, "%d", ppid);
+        execl("/system/bin/strace", "strace", "-p", bb, NULL);
+        /*
+        SysTracer tracer;
+        tracer.run(ppid);
+         */
+
+    }
+    else {
+        //parent
+        _log("before go...");
+        syscall(4, 2, "parent write\n", 12);
+        _log("go...");
+    }
+}
+
 void sys_trace() {
-    signal(SIGCHLD, SIG_IGN);
+    //sys_trace2();
+    //return;
     int v = 0;
     int pid = fork();
     if(pid == 0)
@@ -331,6 +377,7 @@ void sys_trace() {
         //sleep(3);
     }
     else {
+        signal(SIGCHLD, SIG_IGN);
         int val = 0;
         _log("before wait");
         wait(&val); //等待kill stop
