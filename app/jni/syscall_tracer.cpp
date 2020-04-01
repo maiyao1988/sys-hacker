@@ -78,6 +78,7 @@ public:
             err = ptrace(PTRACE_SYSCALL, pid, 0, signal);
             if (err == -1) {
                 _log("ptrace error %s", strerror(errno));
+                remove_and_clear_id(pid);
                 return err;
             }
         }
