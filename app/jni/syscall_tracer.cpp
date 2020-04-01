@@ -56,6 +56,11 @@ public:
 //#define PTRACE_GETHBPREGS 29
 //#define PTRACE_SETHBPREGS 30
 
+    void remove_and_clear_id(pid_t &pid) {
+        mStatus.erase(pid);
+        pid = 0;
+    }
+
     /*
      * params child[in/out] the pid to continue, return the pid return by waitpid(-1)
      * signal
@@ -103,12 +108,14 @@ public:
         }
         if (WIFSIGNALED(status)) {
             _log("pid %d term by signal %d", pid, WTERMSIG(status));
+            remove_and_clear_id(pid);
             return 2;
         }
 
         // Check whether the child exited normally.
         if (WIFEXITED(status)) {
             _log("pid %d exited", pid);
+            remove_and_clear_id(pid);
             return 1;
         }
 
@@ -140,6 +147,7 @@ public:
         int n1 = WIFSTOPPED(status);
         int sig = WSTOPSIG(status);
         _log("warning unknown status 0x%x WIFSTOPPED(%d), WSTOPSIG(%d)", status, n1, sig);
+        remove_and_clear_id(pid);
         return 3;
     }
 
@@ -186,24 +194,14 @@ public:
     }
 
     void run(pid_t pid) {
-        int val = 0;
-        _log("before wait");
-        wait(&val); //等待kill stop
-        _log("after wait");
 
         ptrace(PTRACE_SETOPTIONS, pid, 0, PTRACE_O_TRACESYSGOOD|PTRACE_O_TRACEEXEC|
                                           PTRACE_O_TRACECLONE|PTRACE_O_TRACEFORK|PTRACE_EVENT_VFORK);
-        if(WIFEXITED(val)) {
-            _log("break1\n");
-        }
         mStatus[pid] = ProcessStatus();
         while(1)
         {
             int err = continue_syscall_and_wait(pid);
             if (err != 0) {
-                mStatus.erase(pid);
-                //if wait error，pid is invalid，just pass 0 to next run
-                pid = 0;
                 if (mStatus.empty()) {
                     break;
                 }
@@ -246,7 +244,15 @@ void sys_trace() {
         //execl("/system/bin/ls", "ls", NULL);
         pthread_t t;
         _log("before pthread_create");
-        pthread_create(&t, 0, _thread_p, 0);
+        //pthread_create(&t, 0, _thread_p, 0);
+        /*
+        pid_t n = fork();
+        if (n==0) {
+            sleep(1);
+            syscall(1);
+            return;
+        }
+         */
         _log("after pthread_create");
 
         _log("before write");
@@ -258,6 +264,13 @@ void sys_trace() {
         //sleep(3);
     }
     else {
+        int val = 0;
+        _log("before wait");
+        wait(&val); //等待kill stop
+        _log("after wait");
+        if(WIFEXITED(val)) {
+            _log("break1\n");
+        }
 
         SysTracer tracer;
         tracer.run(pid);
