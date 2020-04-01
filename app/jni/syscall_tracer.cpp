@@ -56,7 +56,11 @@ public:
 //#define PTRACE_GETHBPREGS 29
 //#define PTRACE_SETHBPREGS 30
 
-    int continue_syscall_and_wait(pid_t child, int signal = 0)
+    /*
+     * params child[in/out] the pid to continue, return the pid return by waitpid(-1)
+     * signal
+     */
+    int continue_syscall_and_wait(pid_t &child, int signal = 0)
     {
         int status;
         int err = 0;
@@ -75,7 +79,7 @@ public:
         // When the running tracee enters ptrace-stop, it
         // notifies its tracer using waitpid(2)
         // (or one of the other "wait" system calls).
-        waitpid(child, &status, 0);
+        child = waitpid(-1, &status, 0);
 
         // Ptrace-stopped tracees are reported as returns
         // with pid greater than 0 and WIFSTOPPED(status) true.
@@ -203,9 +207,13 @@ public:
                 st.status = 1;
                 on_before_syscall(pid);
             }
-            else {
+            else if (st.status == 1){
                 st.status = 0;
                 on_after_syscall(pid);
+            }
+            else {
+                _log("ERROR impossible status %d", st.status);
+                abort();
             }
         }
         _log("syscall moniter exit");
