@@ -13,6 +13,7 @@
 #include <android/log.h>
 #include <fcntl.h>
 #include <pthread.h>
+#include <sstream>
 #include "syscallents_arm.h"
 
 struct ProcessStatus {
@@ -36,21 +37,53 @@ void _log(const char *fmt, ...) {
 class SysTracer {
     //TODO:support execve into 64
     std::map<pid_t, ProcessStatus> mStatus;
-public:
-    SysTracer() {
 
-    }
-    ~SysTracer() {
-
-    }
-
-    const char *get_syscall_name(int id) {
-        if (id >= MAX_SYSCALL_NUM) {
-            _log("get_syscal_name %d out-of-range %d", id, MAX_SYSCALL_NUM);
-            //abort();
-            return "[unknown]";
+    const char *read_string(char *buf, size_t len, pid_t pid, unsigned long addr) {
+        if (len % 4) {
+            _log("ERROR only 4 align size if support!!!");
+            abort();
+            return 0;
         }
-        return syscalls[id].name;
+        unsigned long off = 0;
+        unsigned step = sizeof(long);
+        while(off < len) {
+            long tmp = ptrace(PTRACE_PEEKDATA, pid, addr + off, 0);
+            if (tmp < 0) {
+                _log("PTRACE_PEEKDATA error");
+                buf[off] = 0;
+                //abort();
+            }
+
+            memcpy(buf+off, &tmp, step);
+            off += step;
+
+            char *m = (char*)&tmp;
+            bool eos = false;
+            for (int i = 0 ; i < step; i++) {
+                if (m[i] == 0) {
+                    eos = true;
+                    break;
+                }
+            }
+            if (eos) {
+                break;
+            }
+        }
+
+        if (off >= len) {
+            buf[len - 1] = 0;
+        }
+        return buf;
+    }
+
+    bool get_syscall_entry(syscall_entry &entry, int id) {
+        if (id >= MAX_SYSCALL_NUM) {
+            _log("get_syscal_entry %d out-of-range %d", id, MAX_SYSCALL_NUM);
+            //abort();
+            return false;
+        }
+        entry = syscalls[id];
+        return true;
     }
 
 //#define PTRACE_GETHBPREGS 29
@@ -157,19 +190,39 @@ public:
         struct pt_regs regs = {0};
         ptrace(PTRACE_GETREGS, pid, NULL, &regs);
         int sysid = regs.ARM_r7;
-        int p0 = regs.ARM_r0;
-        int p1 = regs.ARM_r1;
-        int p2 = regs.ARM_r2;
-        int p3 = regs.ARM_r3;
-        int p4 = regs.ARM_r4;
-        int p5 = regs.ARM_r5;
-        int p6 = regs.ARM_r6;
         int pc = regs.ARM_pc;
         int lr = regs.ARM_lr;
+        syscall_entry e = {0};
+        bool r = get_syscall_entry(e, sysid);
+        if (!r)
+            return;
 
-        const char *name = get_syscall_name(sysid);
-        _log("(%d)(%s) (0x%x), [0x%08X] [0x%08X] [0x%08X] [0x%08X] [0x%08X] [0x%08X]", pid, name, sysid, p0, p1, p2, p3, p4, p5, p6);
-        _log("(%d)(%s) (0x%x), pc[0x%08X] lr[0x%08X]", pid, name, sysid, pc, lr);
+        const char *name = e.name;
+        std::stringstream ss;
+        char tmpbuf[32] = {0};
+        for (int i = 0; i < e.nargs; i++) {
+            int type = e.args[i];
+            if (type == ARG_STR) {
+                read_string(tmpbuf, sizeof(tmpbuf), pid, (unsigned long)regs.uregs[i]);
+                ss<<","<<tmpbuf;
+            }
+            else if (type == ARG_INT) {
+                ss<<","<<regs.uregs[i];
+            }
+            else if (type == ARG_PTR) {
+                char tmp[16] = {0};
+                sprintf(tmp, ",0x%08X", (unsigned)regs.uregs[i]);
+                ss << tmp;
+            }
+
+        }
+
+        std::string s = ss.str();
+        const char *cs = s.c_str();
+        if (cs[0] != 0) {
+            cs += 1;
+        }
+        _log("[%d](0x%x) %s(%s) pc[0x%08X] lr[0x%08X]", pid, sysid, name, cs, pc, lr);
     }
 
     void on_after_syscall(pid_t pid) {
@@ -177,8 +230,13 @@ public:
         ptrace(PTRACE_GETREGS, pid, NULL, &regs2);
         int retval = regs2.ARM_r0;
         int sysid = regs2.ARM_r7;
-        const char *name = get_syscall_name(sysid);
-        _log("(%d)(%s) (0x%x) return %d\n", pid, name, sysid, retval);
+        syscall_entry e = {0};
+        bool r = get_syscall_entry(e, sysid);
+        if (!r)
+            return;
+
+        const char *name = e.name;
+        _log("[%d](0x%x) (%s) return %d\n", pid, sysid, name, retval);
     }
 
     ProcessStatus &safe_get(pid_t pid) {
@@ -192,6 +250,14 @@ public:
         }
         _log("ERROR pid %d impossible here", pid);
         abort();
+    }
+
+public:
+    SysTracer() {
+
+    }
+    ~SysTracer() {
+
     }
 
     void run(pid_t pid) {
@@ -257,7 +323,7 @@ void sys_trace() {
         _log("after pthread_create");
 
         _log("before write");
-        syscall(4, 2, "c111\n", 4);
+        syscall(4, 2, "c111dstt买\n", 4);
         _log("after write");
         //exit(1);
         kill(getpid(), SIGINT);
