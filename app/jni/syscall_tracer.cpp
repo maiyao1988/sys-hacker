@@ -268,12 +268,9 @@ public:
 
     void run(pid_t pid) {
 
-        _log("11");
         ptrace(PTRACE_SETOPTIONS, pid, 0, PTRACE_O_TRACESYSGOOD|PTRACE_O_TRACEEXEC|
                                           PTRACE_O_TRACECLONE|PTRACE_O_TRACEFORK|PTRACE_EVENT_VFORK);
-        _log("22");
         mStatus[pid] = ProcessStatus();
-        _log("33");
         while(1)
         {
             int err = continue_syscall_and_wait(pid);
