@@ -123,7 +123,14 @@ class SysTracer : public ISysTracer {
         // When the running tracee enters ptrace-stop, it
         // notifies its tracer using waitpid(2)
         // (or one of the other "wait" system calls).
-        pid = waitpid(-1, &status, 0);
+        _log("wait...");
+        pid = waitpid(-1, &status, __WALL);
+        _log("wait return pid %d", pid);
+        std::map<pid_t, ProcessStatus>::iterator it = mStatus.find(pid);
+        if (it == mStatus.end()) {
+            _log("new pid %d wait return...", pid);
+            mStatus[pid] = ProcessStatus();
+        }
 
         // Ptrace-stopped tracees are reported as returns
         // with pid greater than 0 and WIFSTOPPED(status) true.
@@ -167,17 +174,20 @@ class SysTracer : public ISysTracer {
             _log("pid %d stop by fork/vfork/clone", pid);
             pid_t new_pid = 0;
             if (ptrace(PTRACE_GETEVENTMSG, pid, 0, &new_pid) != -1) {
-                _log("process %d created\n", new_pid);
-                mStatus[new_pid] = ProcessStatus();
-                ptrace(PTRACE_SETOPTIONS, new_pid, 0, PTRACE_O_TRACESYSGOOD|PTRACE_O_TRACEEXEC|
-                                                      PTRACE_O_TRACECLONE|PTRACE_O_TRACEFORK|PTRACE_EVENT_VFORK);
+                //_log("process %d created\n", new_pid);
+                //这里并不一定每个线程创建都会调用，貌似是随机的。。。
+                //应该两个线程创建时间非常接近的时候会随机不调用一个
+                //mStatus[new_pid] = ProcessStatus();
+
+//                ptrace(PTRACE_SETOPTIONS, new_pid, 0, PTRACE_O_TRACESYSGOOD|PTRACE_O_TRACEEXEC|
+//                                                      PTRACE_O_TRACECLONE|PTRACE_O_TRACEFORK|PTRACE_EVENT_VFORK);
             }
             return continue_syscall_and_wait(pid);
         }
 
         if (WIFSTOPPED(status)) {
             int sig = WSTOPSIG(status);
-            _log("get stop status 0x%x signal %d pass to tracee", status, sig);
+            _log("pid %d get stop status 0x%x signal %d pass to tracee", pid, status, sig);
             return continue_syscall_and_wait(pid, sig);
         }
 
@@ -269,8 +279,9 @@ public:
 
     void run(pid_t pid) {
 
-        ptrace(PTRACE_SETOPTIONS, pid, 0, PTRACE_O_TRACESYSGOOD|PTRACE_O_TRACEEXEC|
-                                          PTRACE_O_TRACECLONE|PTRACE_O_TRACEFORK|PTRACE_EVENT_VFORK);
+        ptrace(PTRACE_SETOPTIONS, pid, 0, PTRACE_O_TRACESYSGOOD|PTRACE_O_TRACEEXEC);
+        //ptrace(PTRACE_SETOPTIONS, pid, 0, PTRACE_O_TRACESYSGOOD|PTRACE_O_TRACEEXEC|
+        //                                  PTRACE_O_TRACECLONE|PTRACE_O_TRACEFORK|PTRACE_EVENT_VFORK);
         mStatus[pid] = ProcessStatus();
         while(1)
         {
@@ -313,6 +324,7 @@ void sys_tracer_release(ISysTracer *&p) {
 
 void *_thread_p(void *p) {
     //sleep(1000);
+    syscall(4, 2, "thread write\n", 12);
     return 0;
 }
 
@@ -337,11 +349,9 @@ void sys_trace2() {
         }
         char bb[50] = {0};
         sprintf(bb, "%d", ppid);
-        execl("/system/bin/strace", "strace", "-p", bb, NULL);
-        /*
+        //execl("/system/bin/strace", "strace", "-p", bb, NULL);
         SysTracer tracer;
         tracer.run(ppid);
-         */
 
     }
     else {
@@ -365,7 +375,16 @@ void sys_trace() {
         //execl("/system/bin/ls", "ls", NULL);
         pthread_t t;
         _log("before pthread_create");
-        //pthread_create(&t, 0, _thread_p, 0);
+        pthread_create(&t, 0, _thread_p, 0);
+
+        int r = 0;
+        pthread_join(t, (void**)&r);
+
+        pthread_t t2;
+        pthread_create(&t2, 0, _thread_p, 0);
+
+        r = 0;
+        pthread_join(t2, (void**)&r);
         /*
         pid_t n = fork();
         if (n==0) {
@@ -374,13 +393,10 @@ void sys_trace() {
             return;
         }
          */
-        _log("after pthread_create");
-
-        _log("before write");
         syscall(4, 2, "c111dstt买\n", 4);
         _log("after write");
         //exit(1);
-        kill(getpid(), SIGINT);
+        //kill(getpid(), SIGINT);
         syscall(1);
         //sleep(3);
     }
