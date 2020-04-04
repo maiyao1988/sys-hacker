@@ -31,7 +31,11 @@ int main(int args, char *argv[]) {
     }
     int val = 0;
     printf("waiting pid %d to stop...\n", trace_pid);
-    wait(&val); //等待kill stop
+    int n = waitpid(trace_pid, &val, __WALL); //等待kill stop
+    printf("pid %d has return\n", n);
+    if (n < 0) {
+        printf("waitpid return error %s", strerror(errno));
+    }
     if(WIFEXITED(val)) {
         printf("pid %d has exited...\n", trace_pid);
         return -4;
